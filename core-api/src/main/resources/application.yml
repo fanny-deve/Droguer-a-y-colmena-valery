@@ -1,0 +1,57 @@
+spring:
+  application:
+    name: pos-core-api
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 10000
+  jackson:
+    default-property-inclusion: non_null
+    time-zone: UTC
+    serialization:
+      write-dates-as-timestamps: false
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 6MB
+
+server:
+  port: ${PORT:8080}
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:true}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:true}
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-ttl-minutes: ${JWT_ACCESS_TTL_MINUTES:15}
+    refresh-ttl-days: ${JWT_REFRESH_TTL_DAYS:7}
+  admin-bootstrap:
+    username: ${ADMIN_USERNAME:}
+    password: ${ADMIN_INITIAL_PASSWORD:}
+    nombre: ${ADMIN_NOMBRE:Administradora}
+  analytics:
+    url: ${ANALYTICS_URL:http://localhost:8000}
+    api-key: ${ANALYTICS_API_KEY:}
+  cors:
+    allowed-origins: ${CORS_ORIGINS:http://localhost:5173}
