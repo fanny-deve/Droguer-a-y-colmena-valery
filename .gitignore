@@ -1,0 +1,16 @@
+# Secretos y entorno local: NUNCA se versionan
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Java / Maven
+target/
+*.class
+.idea/
+*.iml
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
