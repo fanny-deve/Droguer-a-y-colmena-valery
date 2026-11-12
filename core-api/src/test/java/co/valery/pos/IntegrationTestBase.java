@@ -33,7 +33,7 @@ import org.testcontainers.containers.PostgreSQLContainer;
 @SpringBootTest
 @AutoConfigureMockMvc
 public abstract class IntegrationTestBase {
-    protected static final String ADMIN_USER = "admin";
+    protected static final String ADMIN_USER = "admin.valery";
     protected static final String ADMIN_PASS_INICIAL = "Admin#Inicial2026";
     protected static final String ADMIN_PASS = "Admin#Definitiva2026";
     protected static final String CAJERA_PASS = "Cajera#Segura2026";
