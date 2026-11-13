@@ -38,7 +38,7 @@ jobs:
             const lineas = log.split('\n').map(l => l.length > 350 ? l.slice(0, 350) + '…' : l);
             const vistos = new Set();
             const unicas = lineas.filter(l => { if (vistos.has(l)) return false; vistos.add(l); return true; });
-            const causas = unicas.filter(l => /Caused by|APPLICATION FAILED|Description:|Action:|UnsatisfiedDependency|BeanCreation|COMPILATION ERROR|\[ERROR\] .*\.java/.test(l)).slice(0, 40);
+            const causas = unicas.filter(l => /Caused by|APPLICATION FAILED|Description:|Action:|UnsatisfiedDependency|BeanCreation|COMPILATION ERROR|AssertionFailedError|Expecting|expected:|Expected|but was|co\.valery\.pos\.[A-Za-z]+Test\.|\[ERROR\] .*\.java/.test(l)).slice(0, 40);
             const resumen = unicas.filter(l => /Tests run:|BUILD|FAIL/.test(l)).slice(-25);
             const cuerpo = ['--- CAUSAS (primeras) ---', ...causas, '--- RESUMEN ---', ...resumen].join('\n').slice(0, 58000);
             await github.rest.repos.createCommitComment({

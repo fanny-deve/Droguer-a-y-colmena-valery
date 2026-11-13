@@ -63,7 +63,7 @@ public class ReporteService {
         return new Rango(d, h);
     }
 
-    private static final String VENTAS_EN_RANGO = """
+    private static final String VENTAS_EN_RANGO = " " + """
             v.estado = 'CONFIRMADA'
               and v.fecha_servidor >= (cast(:d as date)::timestamp at time zone 'America/Bogota')
               and v.fecha_servidor < ((cast(:h as date) + 1)::timestamp at time zone 'America/Bogota')
