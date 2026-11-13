@@ -251,6 +251,11 @@ public class VentaService {
         return c;
     }
 
+    @Transactional(readOnly = true)
+    public VentaDto obtener(UUID id) {
+        return detalle(id, CurrentUser.require(), false);
+    }
+
     private VentaDto detalle(UUID id, AuthUser actor, boolean duplicada) {
         Cab c = cabecera(id, actor);
         List<VentaItemDto> items = jdbc.sql("""
