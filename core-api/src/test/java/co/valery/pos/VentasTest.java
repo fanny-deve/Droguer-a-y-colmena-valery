@@ -1,7 +1,6 @@
 package co.valery.pos;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import java.math.BigDecimal;
@@ -402,7 +401,7 @@ class VentasTest extends IntegrationTestBase {
             futuros.add(ex.submit(() -> {
                 listos.countDown();
                 salida.await();
-                return mvc.perform(post("/api/v1/ventas").header("Authorization", "Bearer " + tk)
+                return mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post("/api/v1/ventas").header("Authorization", "Bearer " + tk)
                         .contentType(MediaType.APPLICATION_JSON).content(json)).andReturn().getResponse().getStatus();
             }));
         }
