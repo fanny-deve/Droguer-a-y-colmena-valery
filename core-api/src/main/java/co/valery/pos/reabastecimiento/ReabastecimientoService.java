@@ -75,7 +75,7 @@ public class ReabastecimientoService {
                 demandaSemanal = proy.stream().reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(proy.size()), 3, RoundingMode.HALF_UP);
                 fuente = "PROYECCION";
             } else {
-                BigDecimal suma = jdbc.sql("select coalesce(sum(unidades), 0) from v_demanda_diaria where producto_id = :p and fecha >= :d and fecha < :h")
+                BigDecimal suma = jdbc.sql("select coalesce(sum(unidades), 0) from v_demanda_diaria where producto_id = :p and fecha > :d and fecha <= :h")
                         .param("p", c.id()).param("d", hoy.minusDays(7L * SEMANAS_HISTORICO)).param("h", hoy).query(BigDecimal.class).single();
                 if (suma.signum() > 0) {
                     demandaSemanal = suma.divide(BigDecimal.valueOf(SEMANAS_HISTORICO), 3, RoundingMode.HALF_UP);
