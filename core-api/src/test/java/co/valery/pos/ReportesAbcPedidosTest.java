@@ -206,7 +206,7 @@ class ReportesAbcPedidosTest extends IntegrationTestBase {
         String id = pedido.get("id").asText();
         assertThat(pedido.get("estado").asText()).isEqualTo("BORRADOR");
         assertThat(pedido.get("items").get(0).get("sugerido").asBoolean()).isTrue();
-        assertThat(d(pedido, "totalEstimado")).isEqualByComparingTo("37500");      // 25 × costo de referencia 1.500 (último costo)
+        assertThat(d(pedido, "totalEstimado")).isEqualByComparingTo("25000");      // 25 × último costo de compra (1.000)
         assertThat(sugerenciaDe(p)).isNotNull();                                   // un borrador aún no cuenta como "en tránsito"
 
         put(ADM + "/pedidos/" + id, adminToken(), Map.of("proveedorId", prov, "items",
