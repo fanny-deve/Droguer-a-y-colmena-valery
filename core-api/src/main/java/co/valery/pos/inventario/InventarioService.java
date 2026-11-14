@@ -102,6 +102,20 @@ public class InventarioService {
         return obtenerLote(loteId);
     }
 
+    /** Carga inicial desde importación: admite lotes ya vencidos (existencias físicas reales que luego se dan de baja). */
+    @Transactional
+    public UUID registrarCargaInicial(UUID productoId, String codigoLote, LocalDate vence, BigDecimal cantidad, BigDecimal costo) {
+        AuthUser actor = CurrentUser.require();
+        UUID loteId = jdbc.sql("""
+                insert into lotes(producto_id, codigo_lote, fecha_vencimiento, cantidad_inicial, cantidad_disponible, costo_unitario, notas, creado_por)
+                values (:p, :c, cast(:f as date), :q, :q, :costo, 'Carga inicial de inventario', :u) returning id
+                """).param("p", productoId).param("c", codigoLote).param("f", vence).param("q", cantidad).param("costo", costo)
+                .param("u", actor.id()).query((rs, i) -> rs.getObject(1, UUID.class)).single();
+        kardex.registrar(loteId, productoId, "CARGA_INICIAL", cantidad, BigDecimal.ZERO, cantidad, costo, "IMPORTACION", null,
+                "Carga inicial de inventario", actor.id());
+        return loteId;
+    }
+
     // ---------- Lotes ----------
 
     private RowMapper<LoteDto> loteMapper(int umbralPorVencer) {

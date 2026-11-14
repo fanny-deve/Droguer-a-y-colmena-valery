@@ -13,6 +13,11 @@ spring:
     time-zone: UTC
     serialization:
       write-dates-as-timestamps: false
+  data:
+    redis:
+      url: ${REDIS_URL:redis://localhost:6379}
+      timeout: 500ms
+      connect-timeout: 500ms
   servlet:
     multipart:
       max-file-size: 5MB
@@ -26,6 +31,9 @@ server:
     include-stacktrace: never
 
 management:
+  health:
+    redis:
+      enabled: false   # Redis es opcional: su caída no debe marcar la aplicación como no saludable
   endpoints:
     web:
       exposure:
@@ -53,5 +61,7 @@ app:
   analytics:
     url: ${ANALYTICS_URL:http://localhost:8000}
     api-key: ${ANALYTICS_API_KEY:}
+  redis:
+    enabled: ${REDIS_ENABLED:false}
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173}

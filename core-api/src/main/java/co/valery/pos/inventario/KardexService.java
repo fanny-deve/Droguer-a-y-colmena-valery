@@ -1,5 +1,6 @@
 package co.valery.pos.inventario;
 
+import co.valery.pos.config.RedisCache;
 import java.math.BigDecimal;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -9,14 +10,17 @@ import org.springframework.stereotype.Service;
 @Service
 public class KardexService {
     private final JdbcClient jdbc;
+    private final RedisCache cache;
 
-    public KardexService(JdbcClient jdbc) {
+    public KardexService(JdbcClient jdbc, RedisCache cache) {
         this.jdbc = jdbc;
+        this.cache = cache;
     }
 
     public long registrar(UUID loteId, UUID productoId, String tipo, BigDecimal cantidadConSigno, BigDecimal antes,
                           BigDecimal despues, BigDecimal costoUnitario, String referenciaTipo, String referenciaId,
                           String motivo, UUID usuarioId) {
+        cache.invalidar("catalogo");
         return jdbc.sql("""
                 insert into movimientos_inventario(lote_id, producto_id, tipo, cantidad, stock_lote_antes, stock_lote_despues,
                        costo_unitario, referencia_tipo, referencia_id, motivo, usuario_id)

@@ -7,6 +7,8 @@ import co.valery.pos.catalogo.CatalogoDtos.ProductoRequest;
 import co.valery.pos.catalogo.CatalogoDtos.ProductoVentaDto;
 import co.valery.pos.common.ApiException;
 import co.valery.pos.common.PageResponse;
+import co.valery.pos.config.RedisCache;
+import com.fasterxml.jackson.core.type.TypeReference;
 import co.valery.pos.inventario.AlertaService;
 import co.valery.pos.security.CurrentUser;
 import java.math.BigDecimal;
@@ -59,11 +61,13 @@ public class ProductoService {
     private final JdbcClient jdbc;
     private final AuditService audit;
     private final AlertaService alertas;
+    private final RedisCache cache;
 
-    public ProductoService(JdbcClient jdbc, AuditService audit, AlertaService alertas) {
+    public ProductoService(JdbcClient jdbc, AuditService audit, AlertaService alertas, RedisCache cache) {
         this.jdbc = jdbc;
         this.audit = audit;
         this.alertas = alertas;
+        this.cache = cache;
     }
 
     // ---------- Consulta ----------
@@ -85,8 +89,14 @@ public class ProductoService {
     /** Búsqueda para punto de venta: solo productos activos y sin información de costos. */
     @Transactional(readOnly = true)
     public PageResponse<ProductoVentaDto> buscarParaVenta(String q, Integer categoriaId, int page, int size) {
+        String clave = "prod:" + cache.version("catalogo") + ":" + co.valery.pos.security.TokenHasher.sha256Hex(
+                (q == null ? "" : q.trim().toLowerCase(Locale.ROOT)) + "|" + categoriaId + "|" + page + "|" + size);
+        var enCache = cache.leer(clave, new TypeReference<PageResponse<ProductoVentaDto>>() {});
+        if (enCache.isPresent()) return enCache.get();
         PageResponse<Fila> r = buscarFilas(q, categoriaId, true, null, false, page, size);
-        return new PageResponse<>(r.items().stream().map(ProductoService::aVenta).toList(), r.page(), r.size(), r.total());
+        PageResponse<ProductoVentaDto> res = new PageResponse<>(r.items().stream().map(ProductoService::aVenta).toList(), r.page(), r.size(), r.total());
+        cache.guardar(clave, res, java.time.Duration.ofSeconds(30));
+        return res;
     }
 
     @Transactional(readOnly = true)
@@ -153,6 +163,7 @@ public class ProductoService {
         det.put("codigo", codigo);
         det.put("nombre", r.nombre().trim());
         det.put("precioVenta", r.precioVenta());
+        cache.invalidar("catalogo");
         audit.registrar("CREAR_PRODUCTO", "productos", id.toString(), det);
         return obtenerAdmin(id);
     }
@@ -188,6 +199,7 @@ public class ProductoService {
             det.put("costoAntes", antes.costoReferencia());
             det.put("costoDespues", r.costoReferencia());
         }
+        cache.invalidar("catalogo");
         audit.registrar("ACTUALIZAR_PRODUCTO", "productos", id.toString(), det);
         alertas.evaluarProducto(id);
         return obtenerAdmin(id);
@@ -202,6 +214,7 @@ public class ProductoService {
                     activo ? "El producto ya está activo" : "El producto ya está dado de baja");
         }
         jdbc.sql("update productos set activo = :a where id = :id").param("a", activo).param("id", id).update();
+        cache.invalidar("catalogo");
         audit.registrar(activo ? "REACTIVAR_PRODUCTO" : "DAR_DE_BAJA_PRODUCTO", "productos", id.toString(),
                 Map.of("codigo", f.codigo(), "stockTotal", f.stockTotal()));
         return obtenerAdmin(id);

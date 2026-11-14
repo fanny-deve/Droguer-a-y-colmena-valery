@@ -9,7 +9,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpServer;
+import java.net.InetSocketAddress;
 import java.sql.Statement;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.temporal.TemporalAdjusters;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -42,7 +49,68 @@ public abstract class IntegrationTestBase {
             .withDatabaseName("pos").withUsername("postgres").withPassword("postgres");
     private static String adminTokenCache;
 
+    /** Simulador del microservicio Python (mismo contrato JSON). Permite probar el éxito y la caída del servicio. */
+    protected static volatile boolean analiticaActiva = true;
+    protected static volatile JsonNode ultimaSolicitudAnalitica;
+    private static HttpServer analitica;
+
     static {
+        try {
+            ObjectMapper m = new ObjectMapper();
+            analitica = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+            analitica.createContext("/health", ex -> {
+                byte[] b = "{\"status\":\"ok\",\"version\":\"stub-1.0\"}".getBytes(StandardCharsets.UTF_8);
+                ex.getResponseHeaders().add("Content-Type", "application/json");
+                ex.sendResponseHeaders(200, b.length);
+                ex.getResponseBody().write(b);
+                ex.close();
+            });
+            analitica.createContext("/v1/proyecciones", ex -> {
+                byte[] salida;
+                int codigo = 200;
+                if (!"clave-prueba".equals(ex.getRequestHeaders().getFirst("X-API-Key"))) {
+                    codigo = 401;
+                    salida = "{\"detail\":\"API key inválida\"}".getBytes(StandardCharsets.UTF_8);
+                } else if (!analiticaActiva) {
+                    codigo = 500;
+                    salida = "{\"detail\":\"caído\"}".getBytes(StandardCharsets.UTF_8);
+                } else {
+                    JsonNode req = m.readTree(ex.getRequestBody());
+                    ultimaSolicitudAnalitica = req;
+                    LocalDate lunes = LocalDate.parse(req.get("fecha_corte").asText()).with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                    int h = req.get("horizonte_semanas").asInt();
+                    ObjectNode out = m.createObjectNode();
+                    out.put("version_modelo", "stub-1.0");
+                    out.put("aviso", "campo desconocido que el cliente debe ignorar");
+                    ArrayNode resultados = out.putArray("resultados");
+                    for (JsonNode serie : req.get("series")) {
+                        ObjectNode r = resultados.addObject();
+                        r.put("producto_id", serie.get("producto_id").asText());
+                        r.put("modelo", "STUB");
+                        r.put("error_wape", 0.2);
+                        r.put("observaciones_semanales", serie.get("observaciones").size());
+                        ArrayNode ps = r.putArray("periodos");
+                        for (int i = 0; i < h; i++) {
+                            ObjectNode p = ps.addObject();
+                            p.put("inicio", lunes.plusDays(7L * i).toString());
+                            p.put("fin", lunes.plusDays(7L * i + 6).toString());
+                            p.put("demanda_proyectada", 7.5);
+                            p.put("limite_inferior", 5.0);
+                            p.put("limite_superior", 10.0);
+                        }
+                        r.putArray("advertencias");
+                    }
+                    salida = m.writeValueAsBytes(out);
+                }
+                ex.getResponseHeaders().add("Content-Type", "application/json");
+                ex.sendResponseHeaders(codigo, salida.length);
+                ex.getResponseBody().write(salida);
+                ex.close();
+            });
+            analitica.start();
+        } catch (Exception e) {
+            throw new IllegalStateException("No se pudo iniciar el simulador de analítica", e);
+        }
         PG.start();
         try (Connection c = DriverManager.getConnection(PG.getJdbcUrl(), "postgres", "postgres");
              Statement st = c.createStatement()) {
@@ -71,7 +139,7 @@ public abstract class IntegrationTestBase {
         r.add("app.admin-bootstrap.password", () -> ADMIN_PASS_INICIAL);
         r.add("app.admin-bootstrap.nombre", () -> "Administradora de Pruebas");
         r.add("app.cors.allowed-origins", () -> "http://localhost:5173");
-        r.add("app.analytics.url", () -> "http://localhost:9");
+        r.add("app.analytics.url", () -> "http://127.0.0.1:" + analitica.getAddress().getPort());
         r.add("app.analytics.api-key", () -> "clave-prueba");
     }
 
