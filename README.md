@@ -14,7 +14,7 @@ Sistema POS con arquitectura híbrida modular y microservicio de analítica pred
 ## Contenido de la rama `backend`
 
 ```
-database/migrations/   Esquema PostgreSQL (001–007): usuarios, catálogo, lotes, ventas selladas, auditoría, analítica, RLS
+database/migrations/   Esquema PostgreSQL (001–008): usuarios, catálogo, lotes, ventas selladas, auditoría, analítica, RLS
 core-api/              API REST Java 21 + Spring Boot 3.3 (núcleo transaccional)
 analytics-service/     Microservicio Python (FastAPI) de proyección de demanda
 docs/API_ENDPOINTS.md  Catálogo de endpoints generado desde el código
@@ -23,7 +23,7 @@ docs/API_ENDPOINTS.md  Catálogo de endpoints generado desde el código
 
 ## Puesta en marcha
 
-1. **Base de datos:** las migraciones de `database/migrations` ya están aplicadas en el proyecto Supabase. Para una base nueva, ejecútelas en orden (001 → 007).
+1. **Base de datos:** las migraciones de `database/migrations` ya están aplicadas en el proyecto Supabase. Para una base nueva, ejecútelas en orden (001 → 008).
 2. **Microservicio Python:**
    ```bash
    cd analytics-service && python -m venv .venv && source .venv/bin/activate
