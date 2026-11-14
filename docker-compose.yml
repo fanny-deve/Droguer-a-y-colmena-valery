@@ -1,0 +1,17 @@
+# Entorno local del backend. La base de datos es Supabase (nube); Redis Cloud es opcional.
+# Uso:  cp core-api/.env.example .env  (completar valores)  y luego:  docker compose up --build
+services:
+  analytics:
+    build: ./analytics-service
+    environment:
+      ANALYTICS_API_KEY: ${ANALYTICS_API_KEY}
+      REDIS_URL: ${REDIS_URL:-}
+    ports: ["8000:8000"]
+
+  core-api:
+    build: ./core-api
+    depends_on: [analytics]
+    env_file: .env
+    environment:
+      ANALYTICS_URL: http://analytics:8000
+    ports: ["8080:8080"]
