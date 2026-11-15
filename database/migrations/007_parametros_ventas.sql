@@ -1,5 +1,5 @@
 -- 007: Parámetros de ventas y caja
--- Cubre: RF-01, RF-21 (cierre de caja)
+-- Cubre: RF-01 (registro de ventas) y el cierre de caja con arqueo
 
 insert into configuracion (clave, valor, descripcion) values
   ('ventas.exigir_caja_abierta', 'true',

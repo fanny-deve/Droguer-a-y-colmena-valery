@@ -22,7 +22,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Apertura y cierre de caja con arqueo: resumen diario de ventas y diferencia de efectivo (RF-21, iteración de cierre de caja). */
+/** Apertura y cierre de caja con arqueo: resumen diario de ventas y diferencia de efectivo (iteración de cierre de caja del plan de trabajo). */
 @Service
 public class CajaService {
     private record Fila(UUID id, UUID cajeroId, String cajero, String estado, OffsetDateTime abiertaEn, BigDecimal fondo,
