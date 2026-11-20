@@ -20,6 +20,8 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - name: Compatibilidad de Testcontainers con el Docker del runner (API mínima 1.44)
+        run: echo "api.version=1.44" >> ~/.docker-java.properties
       - name: Compilar y probar
         id: build
         continue-on-error: true
