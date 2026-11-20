@@ -45,7 +45,7 @@ public abstract class IntegrationTestBase {
     protected static final String ADMIN_PASS = "Admin#Definitiva2026";
     protected static final String CAJERA_PASS = "Cajera#Segura2026";
 
-    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:16-alpine")
+    static final PostgreSQLContainer<?> PG = new PostgreSQLContainer<>("postgres:17-alpine")
             .withDatabaseName("pos").withUsername("postgres").withPassword("postgres");
     private static String adminTokenCache;
 

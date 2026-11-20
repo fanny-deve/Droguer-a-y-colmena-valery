@@ -1,0 +1,42 @@
+name: respaldo-bd
+
+# Copia de seguridad semanal de la base de datos, CIFRADA con age: el repositorio es público, así que el archivo
+# solo es útil para quien tenga la clave privada (que nunca sale de manos de la administradora del proyecto).
+on:
+  schedule:
+    - cron: '0 7 * * 0'        # domingos 2:00 a. m. hora de Colombia
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  respaldo:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      BACKUP_AGE_PUBLIC_KEY: ${{ secrets.BACKUP_AGE_PUBLIC_KEY }}
+    steps:
+      - name: Comprobar configuración
+        run: |
+          [ -n "$SUPABASE_DB_URL" ] && [ -n "$BACKUP_AGE_PUBLIC_KEY" ] || { echo "::error::Faltan SUPABASE_DB_URL y/o BACKUP_AGE_PUBLIC_KEY"; exit 1; }
+      - name: Instalar cliente de PostgreSQL 17 y age
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y postgresql-common age
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y postgresql-client-17
+      - name: Volcar la base de datos
+        run: pg_dump "$SUPABASE_DB_URL" --format=custom --no-owner --no-privileges --schema=public -f respaldo.dump
+      - name: Verificar que el volcado es legible
+        run: |
+          pg_restore --list respaldo.dump | head -20
+          test "$(pg_restore --list respaldo.dump | grep -c 'TABLE DATA')" -ge 20
+      - name: Cifrar
+        run: |
+          age -r "$BACKUP_AGE_PUBLIC_KEY" -o "respaldo-$(date -u +%Y%m%d).dump.age" respaldo.dump
+          rm -f respaldo.dump
+      - uses: actions/upload-artifact@v4
+        with:
+          name: respaldo-bd-cifrado
+          path: respaldo-*.dump.age
+          retention-days: 60

@@ -10,9 +10,15 @@ from . import cache
 from .forecasting import VERSION_MODELO, pronosticar_serie
 from .schemas import RespuestaProyeccion, ResultadoSerie, SolicitudProyeccion
 
+# En producción la documentación interactiva queda DESHABILITADA (ANALYTICS_DOCS=true solo para desarrollo).
+_DOCS = os.getenv("ANALYTICS_DOCS", "false").lower() == "true"
+
 app = FastAPI(
     title="Microservicio de Proyección de Demanda — Droguería & Colmena Valery",
     version=VERSION_MODELO,
+    docs_url="/docs" if _DOCS else None,
+    redoc_url=None,
+    openapi_url="/openapi.json" if _DOCS else None,
     description="Servicio analítico aislado del núcleo transaccional (RF-18). Sin acceso a la base de datos: "
                 "recibe series de ventas por API y devuelve proyecciones semanales.",
 )

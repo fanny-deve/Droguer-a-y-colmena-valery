@@ -39,7 +39,7 @@ jobs:
             const vistos = new Set();
             const unicas = lineas.filter(l => { if (vistos.has(l)) return false; vistos.add(l); return true; });
             const causas = unicas.filter(l => /Caused by|APPLICATION FAILED|Description:|Action:|UnsatisfiedDependency|BeanCreation|COMPILATION ERROR|AssertionFailedError|Expecting|expected:|Expected|but was|co\.valery\.pos\.[A-Za-z]+Test\.|\[ERROR\] .*\.java/.test(l)).slice(0, 40);
-            const resumen = unicas.filter(l => /Tests run:|BUILD|FAIL/.test(l)).slice(-25);
+            const resumen = unicas.filter(l => /Tests run:|BUILD|FAIL|RENDIMIENTO/.test(l)).slice(-40);
             const cuerpo = ['--- CAUSAS (primeras) ---', ...causas, '--- RESUMEN ---', ...resumen].join('\n').slice(0, 58000);
             await github.rest.repos.createCommitComment({
               owner: context.repo.owner, repo: context.repo.repo, commit_sha: context.sha,
@@ -64,3 +64,41 @@ jobs:
         run: |
           pip install -r requirements-dev.txt
           pytest -q
+
+  imagenes-docker:
+    name: Construcción y verificación de imágenes Docker
+    runs-on: ubuntu-latest
+    needs: []
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagen del microservicio
+        run: docker build -t valery-analytics:ci analytics-service
+      - name: Verificar que el microservicio arranca y responde
+        run: |
+          docker run -d --name an -p 8000:8000 -e ANALYTICS_API_KEY=clave-ci valery-analytics:ci
+          for i in $(seq 1 20); do curl -fsS http://localhost:8000/health && break; sleep 2; done
+          curl -fsS http://localhost:8000/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/docs)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8000/v1/proyecciones -H 'Content-Type: application/json' -d '{}')" = "401"
+          docker rm -f an
+      - name: Construir imagen de la API
+        run: docker build -t valery-api:ci core-api
+      - name: Verificar que la API arranca contra PostgreSQL y expone su salud
+        run: |
+          docker network create ci
+          docker run -d --name pg --network ci -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pos postgres:17-alpine
+          for i in $(seq 1 30); do docker exec pg pg_isready -U postgres && break; sleep 2; done
+          docker exec pg psql -U postgres -d pos -c "create role anon nologin; create role authenticated nologin; create schema extensions;"
+          for f in database/migrations/*.sql; do docker cp "$f" pg:/tmp/m.sql && docker exec pg psql -v ON_ERROR_STOP=1 -U postgres -d pos -f /tmp/m.sql > /dev/null; done
+          docker exec pg psql -U postgres -d pos -c "alter role app_backend login password 'ci-pass'"
+          docker run -d --name api --network ci -p 8080:8080 \
+            -e DB_URL=jdbc:postgresql://pg:5432/pos -e DB_USER=app_backend -e DB_PASSWORD=ci-pass \
+            -e JWT_SECRET=secreto-de-integracion-continua-0123456789 \
+            -e ADMIN_USERNAME=admin.valery -e ADMIN_INITIAL_PASSWORD='Admin#Inicial2026' \
+            valery-api:ci
+          for i in $(seq 1 60); do curl -fsS http://localhost:8080/actuator/health/readiness && break; sleep 3; done
+          curl -fsS http://localhost:8080/actuator/health/readiness
+          curl -fsS http://localhost:8080/actuator/health/liveness
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/swagger-ui.html)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/api/v1/productos)" = "401"
+          docker logs api 2>&1 | tail -5

@@ -1,6 +1,8 @@
 spring:
   application:
     name: pos-core-api
+  lifecycle:
+    timeout-per-shutdown-phase: 25s
   datasource:
     url: ${DB_URL}
     username: ${DB_USER}
@@ -25,7 +27,9 @@ spring:
 
 server:
   port: ${PORT:8080}
-  forward-headers-strategy: framework
+  shutdown: graceful
+  # 'native': Tomcat solo confía en X-Forwarded-* si vienen de proxies de red privada (evita falsificar la IP de origen)
+  forward-headers-strategy: native
   error:
     include-message: never
     include-stacktrace: never
@@ -37,11 +41,15 @@ management:
   endpoints:
     web:
       exposure:
-        include: health
+        include: health,info
   endpoint:
     health:
       probes:
         enabled: true
+
+logging:
+  pattern:
+    console: "%d{yyyy-MM-dd'T'HH:mm:ss.SSSXXX} %-5level [%X{requestId:-sin-id}] %logger{36} - %msg%n"
 
 springdoc:
   api-docs:
@@ -63,5 +71,8 @@ app:
     api-key: ${ANALYTICS_API_KEY:}
   redis:
     enabled: ${REDIS_ENABLED:false}
+  rate-limit:
+    auth-per-minute: ${RATE_LIMIT_AUTH_PER_MINUTE:20}
+    api-per-minute: ${RATE_LIMIT_API_PER_MINUTE:900}
   cors:
     allowed-origins: ${CORS_ORIGINS:http://localhost:5173}

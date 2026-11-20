@@ -28,7 +28,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
@@ -88,9 +90,11 @@ public class ProyeccionService {
     private final ObjectMapper om;
     private final AppProperties props;
     private final RestClient http;
+    private final TransactionTemplate tx;
 
     public ProyeccionService(JdbcClient jdbc, AuditService audit, ConfiguracionService config, RedisCache cache, ObjectMapper om,
-                             AppProperties props, RestClient.Builder builder) {
+                             AppProperties props, RestClient.Builder builder, PlatformTransactionManager tm) {
+        this.tx = new TransactionTemplate(tm);
         this.jdbc = jdbc;
         this.audit = audit;
         this.config = config;
@@ -107,50 +111,63 @@ public class ProyeccionService {
         return props.analytics() != null && props.analytics().apiKey() != null && !props.analytics().apiKey().isBlank();
     }
 
-    @Transactional
+    /**
+     * Genera proyecciones en TRES fases para no retener conexiones ni transacciones mientras se espera al microservicio:
+     * (1) lee las series, (2) llama al microservicio sin transacción, (3) guarda todo en una única transacción.
+     */
     public ResultadoGeneracion generar(GenerarRequest r) {
         int horizonte = r != null && r.horizonteSemanas() != null ? Math.min(Math.max(r.horizonteSemanas(), 1), 26)
                 : Math.max(config.getInt("analitica.horizonte_semanas", 4), 1);
         LocalDate hoy = LocalDate.now(AlertaService.ZONA);
         List<UUID> filtro = r == null ? null : r.productoIds();
+        UUID actor = CurrentUser.opt().map(a -> a.id()).orElse(null);
 
-        // 1) Series de demanda diaria de los productos activos con historia
-        Map<UUID, List<ObsPy>> series = new LinkedHashMap<>();
-        jdbc.sql("""
-                select d.producto_id, d.fecha, sum(d.unidades) as unidades
-                from v_demanda_diaria d join productos p on p.id = d.producto_id
-                where p.activo and d.fecha >= :desde and d.fecha <= :hoy
-                group by d.producto_id, d.fecha order by d.producto_id, d.fecha
-                """).param("desde", hoy.minusDays(DIAS_HISTORIA)).param("hoy", hoy)
-                .query((rs, i) -> {
-                    UUID id = rs.getObject("producto_id", UUID.class);
-                    if (filtro == null || filtro.isEmpty() || filtro.contains(id)) {
-                        series.computeIfAbsent(id, k -> new ArrayList<>()).add(new ObsPy(rs.getObject("fecha", LocalDate.class), rs.getBigDecimal("unidades")));
-                    }
-                    return 0;
-                }).list();
-        if (series.isEmpty()) {
+        // Fase 1: series de demanda diaria de los productos activos con historia
+        Map<UUID, List<ObsPy>> series = tx.execute(st -> {
+            Map<UUID, List<ObsPy>> m = new LinkedHashMap<>();
+            jdbc.sql("""
+                    select d.producto_id, d.fecha, sum(d.unidades) as unidades
+                    from v_demanda_diaria d join productos p on p.id = d.producto_id
+                    where p.activo and d.fecha >= :desde and d.fecha <= :hoy
+                    group by d.producto_id, d.fecha order by d.producto_id, d.fecha
+                    """).param("desde", hoy.minusDays(DIAS_HISTORIA)).param("hoy", hoy)
+                    .query((rs, i) -> {
+                        UUID id = rs.getObject("producto_id", UUID.class);
+                        if (filtro == null || filtro.isEmpty() || filtro.contains(id)) {
+                            m.computeIfAbsent(id, k -> new ArrayList<>()).add(new ObsPy(rs.getObject("fecha", LocalDate.class), rs.getBigDecimal("unidades")));
+                        }
+                        return 0;
+                    }).list();
+            return m;
+        });
+        if (series == null || series.isEmpty()) {
             throw ApiException.unprocessable("SIN_HISTORICO", "No hay historial de ventas para proyectar. Registre ventas o importe el histórico del cuaderno.");
         }
 
-        // 2) Llamadas por lotes al microservicio
-        UUID corrida = UUID.randomUUID();
-        OffsetDateTime ahora = jdbc.sql("select now()").query((rs, i) -> rs.getObject(1, OffsetDateTime.class)).single();
+        // Fase 2: llamadas por lotes al microservicio (SIN transacción abierta)
         List<UUID> ids = new ArrayList<>(series.keySet());
-        int periodos = 0, conAdv = 0, productos = 0;
+        List<ResultadoPy> resultados = new ArrayList<>();
         String version = "desconocida";
-        UUID actor = CurrentUser.opt().map(a -> a.id()).orElse(null);
         for (int i = 0; i < ids.size(); i += LOTE_PRODUCTOS) {
             List<UUID> lote = ids.subList(i, Math.min(i + LOTE_PRODUCTOS, ids.size()));
             RespuestaPy resp = llamar(new SolicitudPy(hoy, horizonte, lote.stream().map(id -> new SeriePy(id.toString(), series.get(id))).toList()));
-            version = resp.versionModelo() == null ? version : resp.versionModelo();
-            for (ResultadoPy res : resp.resultados()) {
-                UUID productoId = UUID.fromString(res.productoId());
+            if (resp.versionModelo() != null) version = resp.versionModelo();
+            resultados.addAll(resp.resultados());
+        }
+        final String versionFinal = version;
+
+        // Fase 3: persistencia atómica de toda la corrida
+        ResultadoGeneracion res = tx.execute(st -> {
+            UUID corrida = UUID.randomUUID();
+            OffsetDateTime ahora = jdbc.sql("select now()").query((rs, i) -> rs.getObject(1, OffsetDateTime.class)).single();
+            int periodos = 0, conAdv = 0, productos = 0;
+            for (ResultadoPy res1 : resultados) {
+                UUID productoId = UUID.fromString(res1.productoId());
                 if (!series.containsKey(productoId)) continue;     // ignora productos que no se enviaron
                 productos++;
-                if (res.advertencias() != null && !res.advertencias().isEmpty()) conAdv++;
-                String parametros = parametros(res, version, horizonte);
-                for (PeriodoPy p : res.periodos()) {
+                if (res1.advertencias() != null && !res1.advertencias().isEmpty()) conAdv++;
+                String parametros = parametros(res1, versionFinal, horizonte);
+                for (PeriodoPy p : res1.periodos()) {
                     jdbc.sql("""
                             insert into proyecciones_demanda(corrida_id, producto_id, granularidad, periodo_inicio, periodo_fin,
                                    demanda_proyectada, limite_inferior, limite_superior, modelo, error_mape, observaciones_usadas,
@@ -159,16 +176,17 @@ public class ProyeccionService {
                                     cast(:par as jsonb), :t, cast(:u as uuid))
                             """).param("c", corrida).param("p", productoId).param("i", p.inicio()).param("f", p.fin())
                             .param("d", p.demanda().max(BigDecimal.ZERO)).param("li", p.inferior()).param("ls", p.superior())
-                            .param("m", res.modelo()).param("e", res.errorWape()).param("o", res.observaciones())
+                            .param("m", res1.modelo()).param("e", res1.errorWape()).param("o", res1.observaciones())
                             .param("par", parametros).param("t", ahora).param("u", actor).update();
                     periodos++;
                 }
             }
-        }
+            audit.registrar("GENERAR_PROYECCIONES", "proyecciones_demanda", corrida.toString(),
+                    Map.of("productos", productos, "periodos", periodos, "horizonteSemanas", horizonte, "modelo", versionFinal));
+            return new ResultadoGeneracion(corrida, productos, periodos, horizonte, versionFinal, conAdv, ahora);
+        });
         cache.invalidar("proyecciones");
-        audit.registrar("GENERAR_PROYECCIONES", "proyecciones_demanda", corrida.toString(),
-                Map.of("productos", productos, "periodos", periodos, "horizonteSemanas", horizonte, "modelo", version));
-        return new ResultadoGeneracion(corrida, productos, periodos, horizonte, version, conAdv, ahora);
+        return res;
     }
 
     private String parametros(ResultadoPy res, String version, int horizonte) {
@@ -276,11 +294,8 @@ public class ProyeccionService {
         return new PageResponse<>(items, pag, tam, total);
     }
 
-    /** Generación periódica: una instancia a la vez y solo si el microservicio está configurado. */
-    @Transactional
+    /** Generación periódica: solo si el microservicio está configurado (una instancia de la API ejecuta los procesos programados). */
     public ResultadoGeneracion generarSiLibre() {
-        if (!configurado()) return null;
-        Boolean libre = jdbc.sql("select pg_try_advisory_xact_lock(727004)").query((rs, i) -> rs.getBoolean(1)).single();
-        return Boolean.TRUE.equals(libre) ? generar(null) : null;
+        return configurado() ? generar(null) : null;
     }
 }

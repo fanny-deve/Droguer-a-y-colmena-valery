@@ -9,6 +9,8 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
@@ -58,6 +60,25 @@ public class ReabastecimientoService {
                         rs.getBigDecimal("punto_reorden"), rs.getString("clasificacion_abc"), rs.getObject("proveedor_principal_id", UUID.class),
                         rs.getString("proveedor"), rs.getInt("lead"), rs.getBigDecimal("stock_vendible"), rs.getBigDecimal("transito"))).list();
 
+        // Consultas EN BLOQUE (no una por producto): proyección vigente de cada producto y demanda histórica reciente
+        Map<UUID, List<BigDecimal>> proyecciones = new HashMap<>();
+        jdbc.sql("""
+                select x.producto_id, x.demanda_proyectada
+                from proyecciones_demanda x
+                join (select distinct on (producto_id) producto_id, corrida_id from proyecciones_demanda
+                      order by producto_id, generado_en desc) u on u.producto_id = x.producto_id and u.corrida_id = x.corrida_id
+                where x.periodo_fin >= :hoy order by x.producto_id, x.periodo_inicio
+                """).param("hoy", hoy).query((rs, i) -> {
+                    proyecciones.computeIfAbsent(rs.getObject("producto_id", UUID.class), k -> new ArrayList<>()).add(rs.getBigDecimal("demanda_proyectada"));
+                    return 0;
+                }).list();
+        Map<UUID, BigDecimal> historico = new HashMap<>();
+        jdbc.sql("select producto_id, sum(unidades) as total from v_demanda_diaria where fecha > :d and fecha <= :h group by producto_id")
+                .param("d", hoy.minusDays(7L * SEMANAS_HISTORICO)).param("h", hoy).query((rs, i) -> {
+                    historico.put(rs.getObject("producto_id", UUID.class), rs.getBigDecimal("total"));
+                    return 0;
+                }).list();
+
         List<Sugerencia> salida = new ArrayList<>();
         for (Candidato c : candidatos) {
             int leadSemanas = (int) Math.ceil(c.leadDias() / 7.0);
@@ -65,18 +86,13 @@ public class ReabastecimientoService {
             BigDecimal demandaSemanal = BigDecimal.ZERO;
             String fuente = "SIN_DATOS";
 
-            List<BigDecimal> proy = jdbc.sql("""
-                    select demanda_proyectada from proyecciones_demanda
-                    where producto_id = :p and periodo_fin >= :hoy
-                      and corrida_id = (select corrida_id from proyecciones_demanda where producto_id = :p order by generado_en desc limit 1)
-                    order by periodo_inicio limit :n
-                    """).param("p", c.id()).param("hoy", hoy).param("n", horizonte).query(BigDecimal.class).list();
+            List<BigDecimal> proy = proyecciones.getOrDefault(c.id(), List.of());
             if (!proy.isEmpty()) {
-                demandaSemanal = proy.stream().reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(proy.size()), 3, RoundingMode.HALF_UP);
+                List<BigDecimal> uso = proy.subList(0, Math.min(proy.size(), horizonte));
+                demandaSemanal = uso.stream().reduce(BigDecimal.ZERO, BigDecimal::add).divide(BigDecimal.valueOf(uso.size()), 3, RoundingMode.HALF_UP);
                 fuente = "PROYECCION";
             } else {
-                BigDecimal suma = jdbc.sql("select coalesce(sum(unidades), 0) from v_demanda_diaria where producto_id = :p and fecha > :d and fecha <= :h")
-                        .param("p", c.id()).param("d", hoy.minusDays(7L * SEMANAS_HISTORICO)).param("h", hoy).query(BigDecimal.class).single();
+                BigDecimal suma = historico.getOrDefault(c.id(), BigDecimal.ZERO);
                 if (suma.signum() > 0) {
                     demandaSemanal = suma.divide(BigDecimal.valueOf(SEMANAS_HISTORICO), 3, RoundingMode.HALF_UP);
                     fuente = "HISTORICO";

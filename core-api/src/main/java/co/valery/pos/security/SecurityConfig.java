@@ -36,19 +36,21 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain filterChain(HttpSecurity http, JwtService jwt, UsuarioRepository usuarios,
-                                    ObjectMapper om, AuditService audit) throws Exception {
+                                    ObjectMapper om, AuditService audit, AppProperties props) throws Exception {
         JwtAuthFilter filtro = new JwtAuthFilter(jwt, usuarios, om);
+        RateLimitFilter limite = new RateLimitFilter(props.rateLimit().authPerMinute(), props.rateLimit().apiPerMinute(), om);
         http.csrf(c -> c.disable())
                 .cors(Customizer.withDefaults())
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .headers(h -> h.frameOptions(f -> f.deny())
+                        .httpStrictTransportSecurity(hsts -> hsts.includeSubDomains(true).maxAgeInSeconds(31_536_000))
                         .contentTypeOptions(Customizer.withDefaults())
                         .referrerPolicy(r -> r.policy(org.springframework.security.web.header.writers.ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER)))
                 .authorizeHttpRequests(a -> a
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .requestMatchers("/error").permitAll()
                         .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh").permitAll()
-                        .requestMatchers("/actuator/health", "/actuator/health/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/info").permitAll()
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
                         .requestMatchers("/api/**").authenticated()
@@ -62,6 +64,7 @@ public class SecurityConfig {
                             ErrorWriter.escribir(res, om, HttpStatus.FORBIDDEN, "ACCESO_DENEGADO",
                                     "No tiene permisos para realizar esta operación", req.getRequestURI());
                         }))
+                .addFilterBefore(limite, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(filtro, UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }

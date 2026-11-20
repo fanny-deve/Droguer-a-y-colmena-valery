@@ -1,0 +1,32 @@
+# API del núcleo transaccional (Java / Spring Boot). Región São Paulo (gru): MISMA región que la base de datos Supabase,
+# para que cada consulta tarde milisegundos y no ~100 ms por viaje intercontinental.
+app = "valery-pos-api"
+primary_region = "gru"
+
+[env]
+  PORT = "8080"
+  SPRING_PROFILES_ACTIVE = "prod"
+  ANALYTICS_URL = "http://valery-pos-analytics.internal:8000"   # red privada de Fly: el microservicio no es público
+  SWAGGER_ENABLED = "false"
+  DB_POOL_SIZE = "8"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"      # un POS no puede "dormirse": siempre encendido
+  auto_start_machines = true
+  min_machines_running = 1
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 100
+    hard_limit = 200
+  [[http_service.checks]]
+    grace_period = "90s"
+    interval = "15s"
+    timeout = "5s"
+    method = "GET"
+    path = "/actuator/health/readiness"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

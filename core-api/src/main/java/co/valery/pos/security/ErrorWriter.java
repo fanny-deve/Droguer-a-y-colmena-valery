@@ -20,6 +20,6 @@ public final class ErrorWriter {
         res.setContentType(MediaType.APPLICATION_JSON_VALUE);
         res.setCharacterEncoding(StandardCharsets.UTF_8.name());
         om.writeValue(res.getOutputStream(), new ApiError(OffsetDateTime.now(), st.value(), code, msg, path, null,
-                UUID.randomUUID().toString().substring(0, 8)));
+                org.slf4j.MDC.get(RequestIdFilter.CLAVE) != null ? org.slf4j.MDC.get(RequestIdFilter.CLAVE) : UUID.randomUUID().toString().substring(0, 8)));
     }
 }

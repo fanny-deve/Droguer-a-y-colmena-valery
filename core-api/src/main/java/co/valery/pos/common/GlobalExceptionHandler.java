@@ -34,8 +34,14 @@ public class GlobalExceptionHandler {
         this.audit = audit;
     }
 
+    /** El traceId que ve el usuario es el mismo X-Request-Id de los logs: sirve para rastrear el error exacto. */
+    private static String traza() {
+        String id = org.slf4j.MDC.get(co.valery.pos.security.RequestIdFilter.CLAVE);
+        return id != null ? id : UUID.randomUUID().toString().substring(0, 8);
+    }
+
     private ResponseEntity<ApiError> build(HttpStatus st, String code, String msg, HttpServletRequest req, List<ApiError.Campo> campos) {
-        String trace = UUID.randomUUID().toString().substring(0, 8);
+        String trace = traza();
         return ResponseEntity.status(st).body(new ApiError(OffsetDateTime.now(), st.value(), code, msg, req.getRequestURI(), campos, trace));
     }
 
@@ -104,7 +110,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiError> inesperado(Exception e, HttpServletRequest req) {
-        String trace = UUID.randomUUID().toString().substring(0, 8);
+        String trace = traza();
         log.error("Error inesperado [{}] en {} {}", trace, req.getMethod(), req.getRequestURI(), e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new ApiError(OffsetDateTime.now(), 500,
                 "ERROR_INTERNO", "Ocurrió un error interno. Referencia: " + trace, req.getRequestURI(), null, trace));

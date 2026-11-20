@@ -35,8 +35,6 @@ public class AbcService {
 
     public record ResumenAbc(String categoria, long productos, BigDecimal valor, BigDecimal participacion) {}
 
-    private record Fila(UUID id, BigDecimal valor) {}
-
     private final JdbcClient jdbc;
     private final ConfiguracionService config;
     private final AuditService audit;
@@ -55,42 +53,49 @@ public class AbcService {
         LocalDate hasta = LocalDate.now(AlertaService.ZONA);
         LocalDate desde = hasta.minusDays(ventana - 1L);
 
-        List<Fila> filas = jdbc.sql("""
-                select p.id, coalesce(sum(d.ingresos), 0) as valor
-                from productos p left join v_demanda_diaria d on d.producto_id = p.id and d.fecha between :d and :h
-                where p.activo group by p.id order by valor desc, p.id
-                """).param("d", desde).param("h", hasta)
-                .query((rs, i) -> new Fila(rs.getObject("id", UUID.class), rs.getBigDecimal("valor"))).list();
-        BigDecimal total = filas.stream().map(Fila::valor).reduce(BigDecimal.ZERO, BigDecimal::add);
-
         UUID corrida = UUID.randomUUID();
-        Map<String, Integer> conteo = new LinkedHashMap<>(Map.of("A", 0, "B", 0, "C", 0));
-        BigDecimal acumulado = BigDecimal.ZERO;
         OffsetDateTime ahora = jdbc.sql("select now()").query((rs, i) -> rs.getObject(1, OffsetDateTime.class)).single();
-        for (Fila f : filas) {
-            BigDecimal participacion = total.signum() == 0 ? BigDecimal.ZERO
-                    : f.valor().multiply(BigDecimal.valueOf(100)).divide(total, 4, RoundingMode.HALF_UP);
-            String cat;
-            if (f.valor().signum() == 0 || total.signum() == 0) cat = "C";
-            else if (acumulado.compareTo(umbralA) < 0) cat = "A";
-            else if (acumulado.compareTo(umbralB) < 0) cat = "B";
-            else cat = "C";
-            acumulado = acumulado.add(participacion);
-            conteo.merge(cat, 1, Integer::sum);
-            jdbc.sql("update productos set clasificacion_abc = :c, abc_actualizado_en = :t where id = :id")
-                    .param("c", cat).param("t", ahora).param("id", f.id()).update();
-            jdbc.sql("""
-                    insert into clasificacion_abc_historial(corrida_id, producto_id, categoria, valor_consumo, participacion,
-                                                            participacion_acumulada, periodo_inicio, periodo_fin, calculado_en)
-                    values (:co, :p, :c, :v, :pa, :ac, :d, :h, :t)
-                    """).param("co", corrida).param("p", f.id()).param("c", cat).param("v", f.valor())
-                    .param("pa", participacion).param("ac", acumulado.min(BigDecimal.valueOf(100))).param("d", desde).param("h", hasta)
-                    .param("t", ahora).update();
-        }
+
+        // Todo el cálculo en SQL por bloques (3 sentencias, sin importar cuántos productos haya):
+        // porcentaje de cada producto, porcentaje acumulado ANTES de sumarlo y categoría A/B/C.
+        jdbc.sql("""
+                insert into clasificacion_abc_historial(corrida_id, producto_id, categoria, valor_consumo, participacion,
+                                                        participacion_acumulada, periodo_inicio, periodo_fin, calculado_en)
+                with consumo as (
+                    select p.id, coalesce(sum(d.ingresos), 0) as valor
+                    from productos p left join v_demanda_diaria d on d.producto_id = p.id and d.fecha between :d and :h
+                    where p.activo group by p.id
+                ), total as (select coalesce(sum(valor), 0) as t from consumo),
+                parte as (
+                    select c.id, c.valor, t.t,
+                           case when t.t > 0 then round(c.valor * 100 / t.t, 4) else 0 end as part
+                    from consumo c cross join total t
+                ), acum as (
+                    select id, valor, t, part,
+                           coalesce(sum(part) over (order by valor desc, id rows between unbounded preceding and 1 preceding), 0) as previo
+                    from parte
+                )
+                select :c, id,
+                       case when valor = 0 or t = 0 then 'C' when previo < :ua then 'A' when previo < :ub then 'B' else 'C' end,
+                       valor, part, least(previo + part, 100), :d, :h, :t
+                from acum
+                """).param("c", corrida).param("d", desde).param("h", hasta).param("ua", umbralA).param("ub", umbralB)
+                .param("t", ahora).update();
+        jdbc.sql("""
+                update productos p set clasificacion_abc = h.categoria, abc_actualizado_en = :t
+                from clasificacion_abc_historial h where h.corrida_id = :c and h.producto_id = p.id
+                """).param("c", corrida).param("t", ahora).update();
+        Map<String, Integer> conteo = new LinkedHashMap<>(Map.of("A", 0, "B", 0, "C", 0));
+        jdbc.sql("select categoria, count(*) as n from clasificacion_abc_historial where corrida_id = :c group by categoria")
+                .param("c", corrida).query((rs, i) -> {
+                    conteo.put(rs.getString("categoria"), rs.getInt("n"));
+                    return 0;
+                }).list();
+        int totalProductos = conteo.values().stream().mapToInt(Integer::intValue).sum();
         audit.registrar("CALCULAR_ABC", "clasificacion_abc_historial", corrida.toString(),
-                Map.of("productos", filas.size(), "A", conteo.get("A"), "B", conteo.get("B"), "C", conteo.get("C"),
+                Map.of("productos", totalProductos, "A", conteo.get("A"), "B", conteo.get("B"), "C", conteo.get("C"),
                         "desde", desde.toString(), "hasta", hasta.toString()));
-        return new ResultadoAbc(corrida, desde, hasta, filas.size(), conteo, ahora);
+        return new ResultadoAbc(corrida, desde, hasta, totalProductos, conteo, ahora);
     }
 
     /** Evaluación periódica: solo una instancia a la vez. */

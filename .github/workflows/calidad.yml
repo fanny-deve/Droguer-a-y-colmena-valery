@@ -1,0 +1,41 @@
+name: calidad-sonar
+
+# Análisis de calidad con SonarQube Cloud (la versión alojada de SonarQube, gratis para repositorios públicos).
+# Se activa cuando existan los secretos SONAR_TOKEN y las variables SONAR_ORGANIZATION / SONAR_PROJECT_KEY.
+on:
+  push:
+    branches: [backend]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sonar:
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    steps:
+      - name: Comprobar configuración
+        id: cfg
+        run: |
+          if [ -z "$SONAR_TOKEN" ]; then echo "Sin SONAR_TOKEN: análisis omitido."; echo "activo=false" >> "$GITHUB_OUTPUT"; else echo "activo=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.cfg.outputs.activo == 'true'
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        if: steps.cfg.outputs.activo == 'true'
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Pruebas con cobertura y análisis Sonar (API Java)
+        if: steps.cfg.outputs.activo == 'true'
+        working-directory: core-api
+        run: >
+          mvn -B -ntp verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar
+          -Dsonar.host.url=https://sonarcloud.io
+          -Dsonar.organization=${{ vars.SONAR_ORGANIZATION }}
+          -Dsonar.projectKey=${{ vars.SONAR_PROJECT_KEY }}
+          -Dsonar.coverage.jacoco.xmlReportPaths=target/site/jacoco/jacoco.xml

@@ -58,3 +58,9 @@ def test_validaciones_422(mod):
     b = cuerpo()
     mod(b)
     assert cliente.post("/v1/proyecciones", json=b, headers=H).status_code == 422
+
+
+def test_documentacion_interactiva_deshabilitada_por_defecto():
+    assert cliente.get("/docs").status_code == 404
+    assert cliente.get("/openapi.json").status_code == 404
+    assert cliente.get("/redoc").status_code == 404

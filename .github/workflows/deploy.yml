@@ -1,0 +1,72 @@
+name: deploy
+
+# Despliegue a producción (Fly.io, región São Paulo). Se ejecuta al publicar una etiqueta v* o manualmente.
+# Los secretos viven SOLO en GitHub Secrets y en Fly; nunca en el repositorio.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+concurrency:
+  group: deploy-produccion
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  desplegar:
+    name: Pruebas, despliegue y verificación
+    runs-on: ubuntu-latest
+    environment: produccion
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Comprobar configuración requerida
+        run: |
+          faltan=0
+          for s in FLY_API_TOKEN DB_URL DB_USER DB_PASSWORD JWT_SECRET ANALYTICS_API_KEY CORS_ORIGINS; do
+            if [ -z "${!s:-}" ]; then echo "::error::Falta el secreto $s"; faltan=1; fi
+          done
+          exit $faltan
+        env:
+          DB_URL: ${{ secrets.DB_URL }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          ANALYTICS_API_KEY: ${{ secrets.ANALYTICS_API_KEY }}
+          CORS_ORIGINS: ${{ secrets.CORS_ORIGINS }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Crear las aplicaciones si no existen (primer despliegue)
+        run: |
+          flyctl apps create valery-pos-analytics --org "${{ vars.FLY_ORG || 'personal' }}" || true
+          flyctl apps create valery-pos-api --org "${{ vars.FLY_ORG || 'personal' }}" || true
+
+      - name: Desplegar el microservicio de analítica (red privada, sin IP pública)
+        run: |
+          flyctl secrets set --stage --app valery-pos-analytics \
+            ANALYTICS_API_KEY="${{ secrets.ANALYTICS_API_KEY }}"
+          flyctl deploy analytics-service --config deploy/fly/analytics.fly.toml --remote-only --no-public-ips --ha=false
+
+      - name: Desplegar la API
+        run: |
+          flyctl secrets set --stage --app valery-pos-api \
+            DB_URL="${{ secrets.DB_URL }}" DB_USER="${{ secrets.DB_USER }}" DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            JWT_SECRET="${{ secrets.JWT_SECRET }}" ANALYTICS_API_KEY="${{ secrets.ANALYTICS_API_KEY }}" \
+            CORS_ORIGINS="${{ secrets.CORS_ORIGINS }}" \
+            REDIS_ENABLED="${{ secrets.REDIS_URL != '' && 'true' || 'false' }}" REDIS_URL="${{ secrets.REDIS_URL }}" \
+            ADMIN_USERNAME="${{ secrets.ADMIN_USERNAME }}" ADMIN_INITIAL_PASSWORD="${{ secrets.ADMIN_INITIAL_PASSWORD }}"
+          flyctl deploy core-api --config deploy/fly/api.fly.toml --remote-only --ha=false
+
+      - name: Verificación posterior al despliegue (smoke test)
+        run: scripts/smoke-test.sh "${{ vars.API_PUBLIC_URL || 'https://valery-pos-api.fly.dev' }}"
+
+      - name: Estado final
+        if: always()
+        run: |
+          flyctl status --app valery-pos-api || true
+          flyctl status --app valery-pos-analytics || true

@@ -1,0 +1,28 @@
+# Perfil de producción: SPRING_PROFILES_ACTIVE=prod
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:8}
+      minimum-idle: 2
+      connection-timeout: 10000
+      idle-timeout: 600000
+      keepalive-time: 300000          # evita que el pooler de Supabase cierre conexiones ociosas
+      max-lifetime: 1500000           # 25 min: menor que el límite del pooler
+      leak-detection-threshold: 60000
+
+springdoc:
+  api-docs:
+    enabled: ${SWAGGER_ENABLED:false}
+  swagger-ui:
+    enabled: ${SWAGGER_ENABLED:false}
+
+management:
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: WARN
+    org.apache.catalina: WARN
